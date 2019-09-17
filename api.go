@@ -7,6 +7,8 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"net/http"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -107,10 +109,10 @@ func RegisterEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 
 	eKey, rcpKey := getCacheKeys(a.Endpoint, httpMethod)
-	if _, ok := store.Get(eKey); ok {
-		RenderJSON(w, http.StatusOK, NewResponse("endpoint already taken"))
-		return
-	}
+	//if _, ok := store.Get(eKey); ok {
+	//	RenderJSON(w, http.StatusOK, NewResponse("endpoint already taken"))
+	//	return
+	//}
 	obj := NewObject()
 	err = obj.Load(a.Payload)
 	if err != nil {
@@ -143,11 +145,38 @@ func getAllowedMethod(method string) (string, error) {
 	return "", errors.New("HTTP method is not allowed")
 }
 
-// DynamicEndpoint renders registered endpoints.
-func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
+func RouteEndpoint(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 
-	eKey, rcpKey := getCacheKeys(vars["endpoint"], r.Method)
+	switch vars["endpoint"] {
+	case "":
+		Home(w, r)
+	case "register":
+		RegisterEndpoint(w, r)
+	case "history":
+		HistoryEndpoint(w, r)
+	default:
+		DynamicEndpoint(w, r)
+	}
+}
+
+// DynamicEndpoint renders registered endpoints.
+func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		RenderJSON(w, http.StatusInternalServerError, NewResponse(err.Error()))
+		return
+	}
+
+	events.Set(strconv.Itoa(int(time.Now().UnixNano())), map[string]interface{}{
+		"endpoint": path,
+		"body": string(body),
+		"headers": r.Header,
+	}, time.Second * 10)
+
+	eKey, rcpKey := getCacheKeys(path, r.Method)
 	if eVal, ok := store.Get(eKey); ok {
 		if rcpVal, ok := store.Get(rcpKey); ok {
 			code := FindResponseCode(rcpVal.(map[int]int), r.Method)
@@ -156,27 +185,16 @@ func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	body, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		RenderJSON(w, http.StatusInternalServerError, NewResponse(err.Error()))
-		return
-	}
-
-	events.Set(string(time.Now().UnixNano()), map[string]interface{}{
-		"endpoint": vars["endpoint"],
-		"body": body,
-		"headers": r.Header,
-	}, time.Second * 10)
-
-	responseText := fmt.Sprintf("apidemic: %s has no %s endpoint", vars["endpoint"], r.Method)
+	responseText := fmt.Sprintf("apidemic: %s has no %s endpoint", path, r.Method)
 	RenderJSON(w, http.StatusNotFound, NewResponse(responseText))
 }
 
 func HistoryEndpoint(w http.ResponseWriter, r *http.Request) {
-	result := make(map[string]interface{})
+	result := make([]interface{}, 0)
 
 	for key, item := range events.Items() {
-		result[key] = item.Object
+		events.Delete(key)
+		result = append(result, item.Object)
 	}
 
 	RenderJSON(w, 200, result)
@@ -192,11 +210,48 @@ func NewResponse(message string) interface{} {
 }
 
 // NewServer returns a new apidemic server
-func NewServer() *mux.Router {
-	m := mux.NewRouter()
-	m.HandleFunc("/", Home)
-	m.HandleFunc("/register", RegisterEndpoint).Methods("POST")
-	m.HandleFunc("/history", HistoryEndpoint).Methods("GET")
-	m.HandleFunc("/api/{endpoint}", DynamicEndpoint).Methods("OPTIONS", "GET", "POST", "PUT", "DELETE", "HEAD")
-	return m
+func NewServer() http.Handler {
+	handler := &RegexpHandler{}
+
+	reg, _ := regexp.Compile("^/register$")
+	handler.HandleFunc(reg, RegisterEndpoint)
+
+	reg, _ = regexp.Compile("^/$")
+	handler.HandleFunc(reg, Home)
+
+	reg, _ = regexp.Compile("^/history$")
+	handler.HandleFunc(reg, HistoryEndpoint)
+
+	reg, _ = regexp.Compile("^.+")
+	handler.HandleFunc(reg, DynamicEndpoint)
+
+	return handler
+}
+
+type RegexpHandler struct {
+	routes []*route
+}
+
+func (h *RegexpHandler) Handler(pattern *regexp.Regexp, handler http.Handler) {
+	h.routes = append(h.routes, &route{pattern, handler})
+}
+
+func (h *RegexpHandler) HandleFunc(pattern *regexp.Regexp, handler func(http.ResponseWriter, *http.Request)) {
+	h.routes = append(h.routes, &route{pattern, http.HandlerFunc(handler)})
+}
+
+type route struct {
+	pattern *regexp.Regexp
+	handler http.Handler
+}
+
+func (h *RegexpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	for _, route := range h.routes {
+		if route.pattern.MatchString(r.URL.Path) {
+			route.handler.ServeHTTP(w, r)
+			return
+		}
+	}
+	// no pattern matched; send 404 response
+	http.NotFound(w, r)
 }
