@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"time"
@@ -18,6 +19,11 @@ const Version = "0.4"
 var maxItemTime = cache.DefaultExpiration
 
 var store = func() *cache.Cache {
+	c := cache.New(5*time.Minute, 30*time.Second)
+	return c
+}()
+
+var events = func() *cache.Cache {
 	c := cache.New(5*time.Minute, 30*time.Second)
 	return c
 }()
@@ -149,8 +155,31 @@ func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		RenderJSON(w, http.StatusInternalServerError, NewResponse(err.Error()))
+		return
+	}
+
+	events.Set(string(time.Now().UnixNano()), map[string]interface{}{
+		"endpoint": vars["endpoint"],
+		"body": body,
+		"headers": r.Header,
+	}, time.Second * 10)
+
 	responseText := fmt.Sprintf("apidemic: %s has no %s endpoint", vars["endpoint"], r.Method)
 	RenderJSON(w, http.StatusNotFound, NewResponse(responseText))
+}
+
+func HistoryEndpoint(w http.ResponseWriter, r *http.Request) {
+	result := make(map[string]interface{})
+
+	for key, item := range events.Items() {
+		result[key] = item.Object
+	}
+
+	RenderJSON(w, 200, result)
 }
 
 // NewResponse helper for response JSON message
@@ -167,6 +196,7 @@ func NewServer() *mux.Router {
 	m := mux.NewRouter()
 	m.HandleFunc("/", Home)
 	m.HandleFunc("/register", RegisterEndpoint).Methods("POST")
+	m.HandleFunc("/history", HistoryEndpoint).Methods("GET")
 	m.HandleFunc("/api/{endpoint}", DynamicEndpoint).Methods("OPTIONS", "GET", "POST", "PUT", "DELETE", "HEAD")
 	return m
 }
