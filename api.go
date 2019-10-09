@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"math/rand"
+	"log"
 	"net/http"
 	"regexp"
 	"strconv"
+	"sync"
 	"time"
 
-	"github.com/gorilla/mux"
 	"github.com/pmylund/go-cache"
 )
 
@@ -32,17 +32,19 @@ var events = func() *cache.Cache {
 
 var allowedHttpMethods = []string{"OPTIONS", "GET", "POST", "PUT", "DELETE", "HEAD"}
 
+var mutex = &sync.Mutex{}
+
 // API is the struct for the json object that is passed to apidemic for registration.
 type API struct {
 	Endpoint                  string                 `json:"endpoint"`
 	HTTPMethod                string                 `json:"http_method"`
-	ResponseCodeProbabilities map[int]int            `json:"response_code_probabilities"`
-	Payload                   Payload                `json:"payload"`
+	Any                       *Response              `json:"any,omitempty"`
+	Exactly                   []Response             `json:"exactly,omitempty"`
 }
 
-type Payload struct {
-	Any map[string]interface{} `json:"any,omitempty"`
-	Exactly []map[string]interface{} `json:"exactly,omitempty"`
+type Response struct {
+	Code    int `json:"code"`
+	Payload map[string]interface{}     `json:"payload"`
 }
 
 // Home renders hopme page. It renders a json response with information about the service.
@@ -55,29 +57,12 @@ func Home(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-// FindResponseCode helps imitating the backend responding with an error message occasionally
-// Example:
-//   {"404": 8, "403": 12, "500": 20, "503": 3}
-//   8% chance of getting 404
-//   12% chance of getting a 500 error
-//   3% chance of getting a 503 error
-//   77% chance of getting 200 OK or 201 Created depending on the HTTP method
-func FindResponseCode(responseCodeProbabilities map[int]int, method string) int {
-	sum := 0
-	r := rand.Intn(100)
-
-	for code, probability := range responseCodeProbabilities {
-		if probability+sum > r {
-			return code
-		}
-		sum = sum + probability
+func code(code int) int {
+	if code <= 0 {
+		return http.StatusOK
 	}
 
-	if method == "POST" {
-		return http.StatusCreated
-	}
-
-	return http.StatusOK
+	return code
 }
 
 // RenderJSON helper for rendering JSON response, it marshals value into json and writes
@@ -104,26 +89,26 @@ func RegisterEndpoint(w http.ResponseWriter, r *http.Request) {
 	a := API{}
 	err := json.NewDecoder(r.Body).Decode(&a)
 	if err != nil {
+		log.Print(err)
+
 		RenderJSON(w, http.StatusBadRequest, NewResponse(err.Error()))
 		return
 	}
 
 	if httpMethod, err = getAllowedMethod(a.HTTPMethod); err != nil {
+		log.Print(err)
+
 		RenderJSON(w, http.StatusBadRequest, NewResponse(err.Error()))
 		return
 	}
 
-	eKey, rcpKey := getCacheKeys(a.Endpoint, httpMethod)
-	store.Set(eKey, a.Payload, maxItemTime)
-	store.Set(rcpKey, a.ResponseCodeProbabilities, maxItemTime)
+	eKey := getCacheKeys(a.Endpoint, httpMethod)
+	store.Set(eKey, a, maxItemTime)
 	RenderJSON(w, http.StatusOK, NewResponse("cool"))
 }
 
-func getCacheKeys(endpoint, httpMethod string) (string, string) {
-	eKey := fmt.Sprintf("%s-%v-e", endpoint, httpMethod)
-	rcpKey := fmt.Sprintf("%s-%v-rcp", endpoint, httpMethod)
-
-	return eKey, rcpKey
+func getCacheKeys(endpoint, httpMethod string) string {
+	return fmt.Sprintf("%s-%v-e", endpoint, httpMethod)
 }
 
 func getAllowedMethod(method string) (string, error) {
@@ -140,61 +125,69 @@ func getAllowedMethod(method string) (string, error) {
 	return "", errors.New("HTTP method is not allowed")
 }
 
-func RouteEndpoint(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-
-	switch vars["endpoint"] {
-	case "":
-		Home(w, r)
-	case "register":
-		RegisterEndpoint(w, r)
-	case "history":
-		HistoryEndpoint(w, r)
-	default:
-		DynamicEndpoint(w, r)
-	}
-}
-
 // DynamicEndpoint renders registered endpoints.
 func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
+		events.Set(strconv.Itoa(int(time.Now().UnixNano())), map[string]interface{}{
+			"endpoint": path,
+			"body": "",
+			"headers": r.Header,
+			"response_status": http.StatusInternalServerError,
+			"response_body": nil,
+		}, time.Second * 10)
+
 		RenderJSON(w, http.StatusInternalServerError, NewResponse(err.Error()))
 		return
+	}
+
+	eKey := getCacheKeys(path, r.Method)
+	if eVal, ok := store.Get(eKey); ok {
+		api := eVal.(API)
+		if api.Any != nil {
+			events.Set(strconv.Itoa(int(time.Now().UnixNano())), map[string]interface{}{
+				"endpoint": path,
+				"body": string(body),
+				"headers": r.Header,
+				"response_status": code(api.Any.Code),
+				"response_body": api.Any.Payload,
+			}, time.Second * 10)
+
+			RenderJSON(w, code(api.Any.Code), api.Any.Payload)
+
+			return
+		} else if api.Exactly != nil {
+			mutex.Lock()
+			defer mutex.Unlock()
+			if len(api.Exactly) > 0 {
+				var apirsp Response
+				apirsp, api.Exactly = api.Exactly[0], api.Exactly[1:]
+				store.Set(eKey, api, maxItemTime)
+
+				events.Set(strconv.Itoa(int(time.Now().UnixNano())), map[string]interface{}{
+					"endpoint": path,
+					"body": string(body),
+					"headers": r.Header,
+					"response_status": code(apirsp.Code),
+					"response_body": apirsp.Payload,
+				}, time.Second * 10)
+
+				RenderJSON(w, code(apirsp.Code), apirsp.Payload)
+
+				return
+			}
+		}
 	}
 
 	events.Set(strconv.Itoa(int(time.Now().UnixNano())), map[string]interface{}{
 		"endpoint": path,
 		"body": string(body),
 		"headers": r.Header,
+		"response_status": http.StatusNotFound,
+		"response_body": nil,
 	}, time.Second * 10)
-
-	eKey, rcpKey := getCacheKeys(path, r.Method)
-	if eVal, ok := store.Get(eKey); ok {
-		if payload, ok := eVal.(Payload); ok {
-			if payload.Any != nil {
-				if rcpVal, ok := store.Get(rcpKey); ok {
-					code := FindResponseCode(rcpVal.(map[int]int), r.Method)
-					RenderJSON(w, code, payload.Any)
-
-					return
-				}
-			} else if payload.Exactly != nil && len(payload.Exactly) > 0 {
-				var pld map[string]interface{}
-				pld, payload.Exactly = payload.Exactly[0], payload.Exactly[1:]
-				store.Set(eKey, payload, maxItemTime)
-
-				if rcpVal, ok := store.Get(rcpKey); ok {
-					code := FindResponseCode(rcpVal.(map[int]int), r.Method)
-					RenderJSON(w, code, pld)
-
-					return
-				}
-			}
-		}
-	}
 
 	responseText := fmt.Sprintf("apidemic: %s has no %s endpoint", path, r.Method)
 	RenderJSON(w, http.StatusNotFound, NewResponse(responseText))
