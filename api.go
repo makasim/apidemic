@@ -37,7 +37,12 @@ type API struct {
 	Endpoint                  string                 `json:"endpoint"`
 	HTTPMethod                string                 `json:"http_method"`
 	ResponseCodeProbabilities map[int]int            `json:"response_code_probabilities"`
-	Payload                   map[string]interface{} `json:"payload"`
+	Payload                   Payload                `json:"payload"`
+}
+
+type Payload struct {
+	Any map[string]interface{} `json:"any,omitempty"`
+	Exactly []map[string]interface{} `json:"exactly,omitempty"`
 }
 
 // Home renders hopme page. It renders a json response with information about the service.
@@ -109,17 +114,7 @@ func RegisterEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 
 	eKey, rcpKey := getCacheKeys(a.Endpoint, httpMethod)
-	//if _, ok := store.Get(eKey); ok {
-	//	RenderJSON(w, http.StatusOK, NewResponse("endpoint already taken"))
-	//	return
-	//}
-	obj := NewObject()
-	err = obj.Load(a.Payload)
-	if err != nil {
-		RenderJSON(w, http.StatusInternalServerError, NewResponse(err.Error()))
-		return
-	}
-	store.Set(eKey, obj, maxItemTime)
+	store.Set(eKey, a.Payload, maxItemTime)
 	store.Set(rcpKey, a.ResponseCodeProbabilities, maxItemTime)
 	RenderJSON(w, http.StatusOK, NewResponse("cool"))
 }
@@ -178,10 +173,26 @@ func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 
 	eKey, rcpKey := getCacheKeys(path, r.Method)
 	if eVal, ok := store.Get(eKey); ok {
-		if rcpVal, ok := store.Get(rcpKey); ok {
-			code := FindResponseCode(rcpVal.(map[int]int), r.Method)
-			RenderJSON(w, code, eVal)
-			return
+		if payload, ok := eVal.(Payload); ok {
+			if payload.Any != nil {
+				if rcpVal, ok := store.Get(rcpKey); ok {
+					code := FindResponseCode(rcpVal.(map[int]int), r.Method)
+					RenderJSON(w, code, payload.Any)
+
+					return
+				}
+			} else if payload.Exactly != nil && len(payload.Exactly) > 0 {
+				var pld map[string]interface{}
+				pld, payload.Exactly = payload.Exactly[0], payload.Exactly[1:]
+				store.Set(eKey, payload, maxItemTime)
+
+				if rcpVal, ok := store.Get(rcpKey); ok {
+					code := FindResponseCode(rcpVal.(map[int]int), r.Method)
+					RenderJSON(w, code, pld)
+
+					return
+				}
+			}
 		}
 	}
 
@@ -192,12 +203,18 @@ func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 func HistoryEndpoint(w http.ResponseWriter, r *http.Request) {
 	result := make([]interface{}, 0)
 
-	for key, item := range events.Items() {
-		events.Delete(key)
+	for _, item := range events.Items() {
 		result = append(result, item.Object)
 	}
 
 	RenderJSON(w, 200, result)
+}
+
+func ResetEndpoint(w http.ResponseWriter, r *http.Request) {
+	events.Flush()
+	store.Flush()
+
+	RenderJSON(w, 200, nil)
 }
 
 // NewResponse helper for response JSON message
@@ -213,14 +230,18 @@ func NewResponse(message string) interface{} {
 func NewServer() http.Handler {
 	handler := &RegexpHandler{}
 
-	reg, _ := regexp.Compile("^/register$")
+	reg, _ := regexp.Compile("^/_register$")
 	handler.HandleFunc(reg, RegisterEndpoint)
 
-	reg, _ = regexp.Compile("^/$")
+	reg, _ = regexp.Compile("^/_$")
 	handler.HandleFunc(reg, Home)
 
-	reg, _ = regexp.Compile("^/history$")
+	reg, _ = regexp.Compile("^/_history$")
 	handler.HandleFunc(reg, HistoryEndpoint)
+
+	reg, _ = regexp.Compile("^/_reset$")
+	handler.HandleFunc(reg, ResetEndpoint)
+
 
 	reg, _ = regexp.Compile("^.+")
 	handler.HandleFunc(reg, DynamicEndpoint)
