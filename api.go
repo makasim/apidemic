@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gorilla/mux"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -128,7 +129,6 @@ func getAllowedMethod(method string) (string, error) {
 // DynamicEndpoint renders registered endpoints.
 func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		events.Set(strconv.Itoa(int(time.Now().UnixNano())), map[string]interface{}{
@@ -239,7 +239,11 @@ func NewServer() http.Handler {
 	reg, _ = regexp.Compile("^.+")
 	handler.HandleFunc(reg, DynamicEndpoint)
 
-	return handler
+	r := mux.NewRouter()
+
+	r.Handle("/", handler)
+
+	return r
 }
 
 type RegexpHandler struct {

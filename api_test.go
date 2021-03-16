@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gorilla/mux"
 	"github.com/pmylund/go-cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,7 +76,7 @@ func TestDynamicEndpointWithForbiddenResponse(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
-func setUp() *mux.Router {
+func setUp() http.Handler {
 	store = cache.New(5*time.Minute, 30*time.Second)
 
 	return NewServer()
@@ -107,10 +106,12 @@ func jsonRequest(method string, path string, body interface{}) *http.Request {
 		}
 		bEnd = bytes.NewReader(b)
 	}
+
 	req, err := http.NewRequest(method, path, bEnd)
 	if err != nil {
 		panic(err)
 	}
+
 	req.Header.Set("Content-Type", "application/json")
 	return req
 }
