@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"sort"
 
 	"net/http"
 	"regexp"
@@ -194,13 +195,21 @@ func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 }
 
 func HistoryEndpoint(w http.ResponseWriter, r *http.Request) {
-	result := make([]interface{}, 0)
-
+	result := make([]cache.Item, 0)
 	for _, item := range events.Items() {
-		result = append(result, item.Object)
+		result = append(result, item)
 	}
 
-	RenderJSON(w, 200, result)
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Expiration < result[j].Expiration
+	})
+
+	out := make([]interface{}, 0)
+	for i := range result {
+		out = append(out, result[i].Object)
+	}
+
+	RenderJSON(w, 200, out)
 }
 
 func ResetEndpoint(w http.ResponseWriter, r *http.Request) {

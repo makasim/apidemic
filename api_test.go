@@ -3,6 +3,7 @@ package apidemic
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -16,6 +17,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type HistoryEntry struct {
+	Endpoint       string                 `json:"endpoint"`
+	Body           string                 `json:"body"`
+	Headers        map[string][]string    `json:"headers"`
+	ResponseStatus int                    `json:"response_status"`
+	ResponseBody   map[string]interface{} `json:"response_body"`
+}
 
 func TestDynamicEndpointFailsWithoutRegistration(t *testing.T) {
 	s := setUp()
@@ -94,6 +103,56 @@ func TestDynamicEndpointWithForbiddenResponse(t *testing.T) {
 
 	s.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestDynamicEndpointSaveRequestOrderInHistory(t *testing.T) {
+	s := setUp()
+	payload := API{
+		Endpoint:   "/api/test",
+		HTTPMethod: "POST",
+		Any: &Response{
+			Code: http.StatusOK,
+		},
+	}
+
+	w := httptest.NewRecorder()
+	req := jsonRequest("POST", "/_register", payload)
+	s.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	w = httptest.NewRecorder()
+
+	for i := 0; i <= 20; i++ {
+		req = jsonRequest("POST", "/api/test", fmt.Sprintf(`{"foo":"%d"}`, i))
+		s.ServeHTTP(w, req)
+	}
+
+	historyReq := jsonRequest("GET", "/_history", "")
+	s.ServeHTTP(w, historyReq)
+
+	history := make([]struct {
+		Body     string `json:"body"`
+		Endpoint string `json:"endpoint"`
+		Headers  struct {
+			ContentType []string `json:"Content-Type"`
+		} `json:"headers"`
+		ResponseBody   interface{} `json:"response_body"`
+		ResponseStatus int         `json:"response_status"`
+	}, 0)
+
+	d := json.NewDecoder(w.Result().Body)
+
+	for d.More() {
+		if err := d.Decode(&history); err != nil {
+			continue
+		}
+	}
+
+	for i, k := range history {
+		require.Equal(t, fmt.Sprintf(`"{\"foo\":\"%d\"}"`, i), k.Body)
+	}
+
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func setUp() http.Handler {
