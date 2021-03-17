@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gorilla/mux"
 	"io/ioutil"
 	"log"
+
 	"net/http"
 	"regexp"
 	"strconv"
@@ -37,15 +37,15 @@ var mutex = &sync.Mutex{}
 
 // API is the struct for the json object that is passed to apidemic for registration.
 type API struct {
-	Endpoint                  string                 `json:"endpoint"`
-	HTTPMethod                string                 `json:"http_method"`
-	Any                       *Response              `json:"any,omitempty"`
-	Exactly                   []Response             `json:"exactly,omitempty"`
+	Endpoint   string     `json:"endpoint"`
+	HTTPMethod string     `json:"http_method"`
+	Any        *Response  `json:"any,omitempty"`
+	Exactly    []Response `json:"exactly,omitempty"`
 }
 
 type Response struct {
-	Code    int `json:"code"`
-	Payload map[string]interface{}     `json:"payload"`
+	Code    int                    `json:"code"`
+	Payload map[string]interface{} `json:"payload"`
 }
 
 // Home renders hopme page. It renders a json response with information about the service.
@@ -132,12 +132,12 @@ func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		events.Set(strconv.Itoa(int(time.Now().UnixNano())), map[string]interface{}{
-			"endpoint": path,
-			"body": "",
-			"headers": r.Header,
+			"endpoint":        path,
+			"body":            "",
+			"headers":         r.Header,
 			"response_status": http.StatusInternalServerError,
-			"response_body": nil,
-		}, time.Second * 10)
+			"response_body":   nil,
+		}, time.Second*10)
 
 		RenderJSON(w, http.StatusInternalServerError, NewResponse(err.Error()))
 		return
@@ -148,12 +148,12 @@ func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 		api := eVal.(API)
 		if api.Any != nil {
 			events.Set(strconv.Itoa(int(time.Now().UnixNano())), map[string]interface{}{
-				"endpoint": path,
-				"body": string(body),
-				"headers": r.Header,
+				"endpoint":        path,
+				"body":            string(body),
+				"headers":         r.Header,
 				"response_status": code(api.Any.Code),
-				"response_body": api.Any.Payload,
-			}, time.Second * 10)
+				"response_body":   api.Any.Payload,
+			}, time.Second*10)
 
 			RenderJSON(w, code(api.Any.Code), api.Any.Payload)
 
@@ -167,12 +167,12 @@ func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 				store.Set(eKey, api, maxItemTime)
 
 				events.Set(strconv.Itoa(int(time.Now().UnixNano())), map[string]interface{}{
-					"endpoint": path,
-					"body": string(body),
-					"headers": r.Header,
+					"endpoint":        path,
+					"body":            string(body),
+					"headers":         r.Header,
 					"response_status": code(apirsp.Code),
-					"response_body": apirsp.Payload,
-				}, time.Second * 10)
+					"response_body":   apirsp.Payload,
+				}, time.Second*10)
 
 				RenderJSON(w, code(apirsp.Code), apirsp.Payload)
 
@@ -182,12 +182,12 @@ func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 
 	events.Set(strconv.Itoa(int(time.Now().UnixNano())), map[string]interface{}{
-		"endpoint": path,
-		"body": string(body),
-		"headers": r.Header,
+		"endpoint":        path,
+		"body":            string(body),
+		"headers":         r.Header,
 		"response_status": http.StatusNotFound,
-		"response_body": nil,
-	}, time.Second * 10)
+		"response_body":   nil,
+	}, time.Second*10)
 
 	responseText := fmt.Sprintf("apidemic: %s has no %s endpoint", path, r.Method)
 	RenderJSON(w, http.StatusNotFound, NewResponse(responseText))
@@ -235,15 +235,10 @@ func NewServer() http.Handler {
 	reg, _ = regexp.Compile("^/_reset$")
 	handler.HandleFunc(reg, ResetEndpoint)
 
-
 	reg, _ = regexp.Compile("^.+")
 	handler.HandleFunc(reg, DynamicEndpoint)
 
-	r := mux.NewRouter()
-
-	r.Handle("/", handler)
-
-	return r
+	return handler
 }
 
 type RegexpHandler struct {

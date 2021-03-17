@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
+
 	"github.com/pmylund/go-cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,6 +25,8 @@ func TestDynamicEndpointFailsWithoutRegistration(t *testing.T) {
 	req := jsonRequest("POST", "/api/test", payload)
 	s.ServeHTTP(w, req)
 
+	r := mux.NewRouter()
+	r.Handle("/api/test", s)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
@@ -31,12 +35,11 @@ func TestDynamicEndpointWithGetRequest(t *testing.T) {
 	payload := registerPayload(t, "fixtures/sample_request.json")
 
 	w := httptest.NewRecorder()
-	req := jsonRequest("POST", "/register", payload)
+	req := jsonRequest("POST", "/_register", payload)
 	s.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
-
 	w = httptest.NewRecorder()
-	req = jsonRequest("GET", "/api/test", nil)
+	req = jsonRequest("GET", "/test", "")
 	s.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -44,16 +47,25 @@ func TestDynamicEndpointWithGetRequest(t *testing.T) {
 
 func TestDynamicEndpointWithPostRequest(t *testing.T) {
 	s := setUp()
-	payload := registerPayload(t, "fixtures/sample_request.json")
-	payload["http_method"] = "POST"
+	payload := API{
+		Endpoint:   "/api/test",
+		HTTPMethod: "POST",
+		Any: &Response{
+			Code: http.StatusCreated,
+			Payload: map[string]interface{}{
+				"foo": "val",
+			},
+		},
+	}
 
 	w := httptest.NewRecorder()
-	req := jsonRequest("POST", "/register", payload)
+	req := jsonRequest("POST", "/_register", payload)
 	s.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
 	w = httptest.NewRecorder()
-	req = jsonRequest("POST", "/api/test", nil)
+
+	req = jsonRequest("POST", "/api/test", "")
 
 	s.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusCreated, w.Code)
@@ -61,16 +73,24 @@ func TestDynamicEndpointWithPostRequest(t *testing.T) {
 
 func TestDynamicEndpointWithForbiddenResponse(t *testing.T) {
 	s := setUp()
-	registerPayload := registerPayload(t, "fixtures/sample_request.json")
-	registerPayload["response_code_probabilities"] = map[string]int{"403": 100}
+	payload := API{
+		Endpoint:   "/api/test",
+		HTTPMethod: "POST",
+		Any: &Response{
+			Code: http.StatusForbidden,
+			Payload: map[string]interface{}{
+				"foo": "val",
+			},
+		},
+	}
 
 	w := httptest.NewRecorder()
-	req := jsonRequest("POST", "/register", registerPayload)
+	req := jsonRequest("POST", "/_register", payload)
 	s.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
 	w = httptest.NewRecorder()
-	req = jsonRequest("GET", "/api/test", nil)
+	req = jsonRequest("POST", "/api/test", "")
 
 	s.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
