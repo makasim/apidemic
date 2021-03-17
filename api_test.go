@@ -11,8 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gorilla/mux"
-
 	"github.com/pmylund/go-cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,10 +30,8 @@ func TestDynamicEndpointFailsWithoutRegistration(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req := jsonRequest("POST", "/api/test", payload)
-	s.ServeHTTP(w, req)
 
-	r := mux.NewRouter()
-	r.Handle("/api/test", s)
+	s.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
@@ -47,7 +43,7 @@ func TestDynamicEndpointWithGetRequest(t *testing.T) {
 	req := jsonRequest("POST", "/_register", payload)
 	s.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
-	w = httptest.NewRecorder()
+
 	req = jsonRequest("GET", "/test", "")
 	s.ServeHTTP(w, req)
 
