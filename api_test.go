@@ -16,21 +16,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type HistoryEntry struct {
-	Endpoint       string                 `json:"endpoint"`
-	Body           string                 `json:"body"`
-	Headers        map[string][]string    `json:"headers"`
-	ResponseStatus int                    `json:"response_status"`
-	ResponseBody   map[string]interface{} `json:"response_body"`
-}
-
 func TestDynamicEndpointFailsWithoutRegistration(t *testing.T) {
 	s := setUp()
 	payload := registerPayload(t, "fixtures/sample_request.json")
 
 	w := httptest.NewRecorder()
 	req := jsonRequest("POST", "/api/test", payload)
-
+	
 	s.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
