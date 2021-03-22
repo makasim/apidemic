@@ -3,6 +3,7 @@ package apidemic
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -10,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gorilla/mux"
 	"github.com/pmylund/go-cache"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,8 +22,8 @@ func TestDynamicEndpointFailsWithoutRegistration(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req := jsonRequest("POST", "/api/test", payload)
+	
 	s.ServeHTTP(w, req)
-
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
@@ -32,12 +32,11 @@ func TestDynamicEndpointWithGetRequest(t *testing.T) {
 	payload := registerPayload(t, "fixtures/sample_request.json")
 
 	w := httptest.NewRecorder()
-	req := jsonRequest("POST", "/register", payload)
+	req := jsonRequest("POST", "/_register", payload)
 	s.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
-	w = httptest.NewRecorder()
-	req = jsonRequest("GET", "/api/test", nil)
+	req = jsonRequest("GET", "/test", "")
 	s.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -45,16 +44,25 @@ func TestDynamicEndpointWithGetRequest(t *testing.T) {
 
 func TestDynamicEndpointWithPostRequest(t *testing.T) {
 	s := setUp()
-	payload := registerPayload(t, "fixtures/sample_request.json")
-	payload["http_method"] = "POST"
+	payload := API{
+		Endpoint:   "/api/test",
+		HTTPMethod: "POST",
+		Any: &Response{
+			Code: http.StatusCreated,
+			Payload: map[string]interface{}{
+				"foo": "val",
+			},
+		},
+	}
 
 	w := httptest.NewRecorder()
-	req := jsonRequest("POST", "/register", payload)
+	req := jsonRequest("POST", "/_register", payload)
 	s.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
 	w = httptest.NewRecorder()
-	req = jsonRequest("POST", "/api/test", nil)
+
+	req = jsonRequest("POST", "/api/test", "")
 
 	s.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusCreated, w.Code)
@@ -62,22 +70,80 @@ func TestDynamicEndpointWithPostRequest(t *testing.T) {
 
 func TestDynamicEndpointWithForbiddenResponse(t *testing.T) {
 	s := setUp()
-	registerPayload := registerPayload(t, "fixtures/sample_request.json")
-	registerPayload["response_code_probabilities"] = map[string]int{"403": 100}
+	payload := API{
+		Endpoint:   "/api/test",
+		HTTPMethod: "POST",
+		Any: &Response{
+			Code: http.StatusForbidden,
+			Payload: map[string]interface{}{
+				"foo": "val",
+			},
+		},
+	}
 
 	w := httptest.NewRecorder()
-	req := jsonRequest("POST", "/register", registerPayload)
+	req := jsonRequest("POST", "/_register", payload)
 	s.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
 	w = httptest.NewRecorder()
-	req = jsonRequest("GET", "/api/test", nil)
+	req = jsonRequest("POST", "/api/test", "")
 
 	s.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
-func setUp() *mux.Router {
+func TestDynamicEndpointSaveRequestOrderInHistory(t *testing.T) {
+	s := setUp()
+	payload := API{
+		Endpoint:   "/api/test",
+		HTTPMethod: "POST",
+		Any: &Response{
+			Code: http.StatusOK,
+		},
+	}
+
+	w := httptest.NewRecorder()
+	req := jsonRequest("POST", "/_register", payload)
+	s.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	w = httptest.NewRecorder()
+
+	for i := 0; i <= 20; i++ {
+		req = jsonRequest("POST", "/api/test", fmt.Sprintf(`{"foo":"%d"}`, i))
+		s.ServeHTTP(w, req)
+	}
+
+	historyReq := jsonRequest("GET", "/_history", "")
+	s.ServeHTTP(w, historyReq)
+
+	history := make([]struct {
+		Body     string `json:"body"`
+		Endpoint string `json:"endpoint"`
+		Headers  struct {
+			ContentType []string `json:"Content-Type"`
+		} `json:"headers"`
+		ResponseBody   interface{} `json:"response_body"`
+		ResponseStatus int         `json:"response_status"`
+	}, 0)
+
+	d := json.NewDecoder(w.Result().Body)
+
+	for d.More() {
+		if err := d.Decode(&history); err != nil {
+			continue
+		}
+	}
+
+	for i, k := range history {
+		require.Equal(t, fmt.Sprintf(`"{\"foo\":\"%d\"}"`, i), k.Body)
+	}
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func setUp() http.Handler {
 	store = cache.New(5*time.Minute, 30*time.Second)
 
 	return NewServer()
@@ -107,10 +173,12 @@ func jsonRequest(method string, path string, body interface{}) *http.Request {
 		}
 		bEnd = bytes.NewReader(b)
 	}
+
 	req, err := http.NewRequest(method, path, bEnd)
 	if err != nil {
 		panic(err)
 	}
+
 	req.Header.Set("Content-Type", "application/json")
 	return req
 }

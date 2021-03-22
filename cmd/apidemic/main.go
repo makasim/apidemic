@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/codegangsta/cli"
 	"github.com/gernest/apidemic"
@@ -26,7 +27,7 @@ func main() {
 	}
 	app.Version = apidemic.Version
 	app.Commands = []cli.Command{
-		cli.Command{
+		{
 			Name:      "start",
 			ShortName: "s",
 			Usage:     "starts apidemic server",
@@ -37,9 +38,11 @@ func main() {
 					Usage:  "HTTP port to run",
 					Value:  3000,
 					EnvVar: "PORT",
+						},
+					},
 				},
-			},
-		},
 	}
-	app.RunAndExitOnError()
+	if err := app.Run(os.Args); err != nil {
+		log.Fatal(err)
+	}
 }
