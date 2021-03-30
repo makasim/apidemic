@@ -18,9 +18,11 @@ import (
 
 func TestDynamicEndpointFailsWithoutRegistration(t *testing.T) {
 	s := setUp()
+	w := httptest.NewRecorder()
+
+	defer resetEndpoints(s, w)
 	payload := registerPayload(t, "fixtures/sample_request.json")
 
-	w := httptest.NewRecorder()
 	req := jsonRequest("POST", "/api/test", payload)
 	
 	s.ServeHTTP(w, req)
@@ -29,9 +31,12 @@ func TestDynamicEndpointFailsWithoutRegistration(t *testing.T) {
 
 func TestDynamicEndpointWithGetRequest(t *testing.T) {
 	s := setUp()
+	w := httptest.NewRecorder()
+	defer resetEndpoints(s, w)
+
 	payload := registerPayload(t, "fixtures/sample_request.json")
 
-	w := httptest.NewRecorder()
+
 	req := jsonRequest("POST", "/_register", payload)
 	s.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -44,6 +49,8 @@ func TestDynamicEndpointWithGetRequest(t *testing.T) {
 
 func TestDynamicEndpointWithPostRequest(t *testing.T) {
 	s := setUp()
+	w := httptest.NewRecorder()
+	defer resetEndpoints(s, w)
 	payload := API{
 		Endpoint:   "/api/test",
 		HTTPMethod: "POST",
@@ -55,7 +62,6 @@ func TestDynamicEndpointWithPostRequest(t *testing.T) {
 		},
 	}
 
-	w := httptest.NewRecorder()
 	req := jsonRequest("POST", "/_register", payload)
 	s.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -70,6 +76,8 @@ func TestDynamicEndpointWithPostRequest(t *testing.T) {
 
 func TestDynamicEndpointWithForbiddenResponse(t *testing.T) {
 	s := setUp()
+	w := httptest.NewRecorder()
+	defer resetEndpoints(s, w)
 	payload := API{
 		Endpoint:   "/api/test",
 		HTTPMethod: "POST",
@@ -81,7 +89,6 @@ func TestDynamicEndpointWithForbiddenResponse(t *testing.T) {
 		},
 	}
 
-	w := httptest.NewRecorder()
 	req := jsonRequest("POST", "/_register", payload)
 	s.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -95,6 +102,9 @@ func TestDynamicEndpointWithForbiddenResponse(t *testing.T) {
 
 func TestDynamicEndpointSaveRequestOrderInHistory(t *testing.T) {
 	s := setUp()
+	w := httptest.NewRecorder()
+	defer resetEndpoints(s, w)
+
 	payload := API{
 		Endpoint:   "/api/test",
 		HTTPMethod: "POST",
@@ -103,10 +113,11 @@ func TestDynamicEndpointSaveRequestOrderInHistory(t *testing.T) {
 		},
 	}
 
-	w := httptest.NewRecorder()
+
 	req := jsonRequest("POST", "/_register", payload)
 	s.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
+
 
 	w = httptest.NewRecorder()
 
@@ -181,4 +192,9 @@ func jsonRequest(method string, path string, body interface{}) *http.Request {
 
 	req.Header.Set("Content-Type", "application/json")
 	return req
+}
+
+func resetEndpoints(s http.Handler, w http.ResponseWriter) {
+	reset := jsonRequest("GET", "/_reset", "")
+	s.ServeHTTP(w, reset)
 }
