@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"github.com/codegangsta/cli"
-	"github.com/gernest/apidemic"
+	"github.com/makasim/apidemic"
 )
 
 func server(ctx *cli.Context) {
