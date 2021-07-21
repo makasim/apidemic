@@ -45,8 +45,8 @@ type API struct {
 }
 
 type Response struct {
-	Code    int                    `json:"code"`
-	Payload map[string]interface{} `json:"payload"`
+	Code    int         `json:"code"`
+	Payload interface{} `json:"payload"`
 }
 
 // Home renders hopme page. It renders a json response with information about the service.
@@ -134,11 +134,13 @@ func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		events.Set(strconv.Itoa(int(time.Now().UnixNano())), map[string]interface{}{
 			"endpoint":        path,
+			"request_uri":     r.URL.RequestURI(),
 			"body":            "",
 			"headers":         r.Header,
 			"response_status": http.StatusInternalServerError,
 			"response_body":   nil,
-		}, time.Second*10)
+			"time":            time.Now().Format(time.RFC3339Nano),
+		}, maxItemTime)
 
 		RenderJSON(w, http.StatusInternalServerError, NewResponse(err.Error()))
 		return
@@ -150,11 +152,13 @@ func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 		if api.Any != nil {
 			events.Set(strconv.Itoa(int(time.Now().UnixNano())), map[string]interface{}{
 				"endpoint":        path,
+				"request_uri":     r.URL.RequestURI(),
 				"body":            string(body),
 				"headers":         r.Header,
 				"response_status": code(api.Any.Code),
 				"response_body":   api.Any.Payload,
-			}, time.Second*10)
+				"time":            time.Now().Format(time.RFC3339Nano),
+			}, maxItemTime)
 
 			RenderJSON(w, code(api.Any.Code), api.Any.Payload)
 
@@ -169,11 +173,13 @@ func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 
 				events.Set(strconv.Itoa(int(time.Now().UnixNano())), map[string]interface{}{
 					"endpoint":        path,
+					"request_uri":     r.URL.RequestURI(),
 					"body":            string(body),
 					"headers":         r.Header,
 					"response_status": code(apirsp.Code),
 					"response_body":   apirsp.Payload,
-				}, time.Second*10)
+					"time":            time.Now().Format(time.RFC3339Nano),
+				}, maxItemTime)
 
 				RenderJSON(w, code(apirsp.Code), apirsp.Payload)
 
@@ -184,11 +190,13 @@ func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 
 	events.Set(strconv.Itoa(int(time.Now().UnixNano())), map[string]interface{}{
 		"endpoint":        path,
+		"request_uri":     r.URL.RequestURI(),
 		"body":            string(body),
 		"headers":         r.Header,
 		"response_status": http.StatusNotFound,
 		"response_body":   nil,
-	}, time.Second*10)
+		"time":            time.Now().Format(time.RFC3339Nano),
+	}, maxItemTime)
 
 	responseText := fmt.Sprintf("apidemic: %s has no %s endpoint", path, r.Method)
 	RenderJSON(w, http.StatusNotFound, NewResponse(responseText))
