@@ -70,7 +70,7 @@ func code(code int) int {
 // RenderJSON helper for rendering JSON response, it marshals value into json and writes
 // it into w.
 func RenderJSON(w http.ResponseWriter, code int, value interface{}) {
-	if code >= 400 || code == http.StatusNoContent {
+	if code == http.StatusNoContent {
 		http.Error(w, "", code)
 		return
 	}
