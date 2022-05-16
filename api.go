@@ -51,7 +51,7 @@ type Response struct {
 }
 
 // Home renders hopme page. It renders a json response with information about the service.
-func Home(w http.ResponseWriter, r *http.Request) {
+func HomeHandler(w http.ResponseWriter, r *http.Request) {
 	details := make(map[string]interface{})
 	details["app_name"] = "ApiDemic"
 	details["version"] = Version
@@ -72,22 +72,30 @@ func code(code int) int {
 // it into w.
 func RenderJSON(w http.ResponseWriter, code int, value interface{}) {
 	if code == http.StatusNoContent {
+		log.Printf("response: %d", http.StatusNoContent)
 		http.Error(w, "", code)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	err := json.NewEncoder(w).Encode(value)
+	b, err := json.Marshal(value)
 	if err != nil {
+		log.Printf("response: marshal body failed: %s", err)
+		log.Printf("response: %d", http.StatusInternalServerError)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if _, err := w.Write(b); err != nil {
+		log.Printf("response: body write failed: %s", err)
+	}
+
+	log.Printf("response: %d\nContent-Type: application/json\n%s\n\n", code, string(b))
 }
 
 // RegisterEndpoint receives API objects and registers them. The payload from the request is
 // transformed into a self aware Value that is capable of faking its own attribute.
-func RegisterEndpoint(w http.ResponseWriter, r *http.Request) {
+func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	var httpMethod string
 	a := API{}
 	err := json.NewDecoder(r.Body).Decode(&a)
@@ -133,6 +141,7 @@ func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
+		log.Printf("request: read body failed: %s", err)
 		events.Set(strconv.Itoa(int(time.Now().UnixNano())), map[string]interface{}{
 			"endpoint":        path,
 			"request_uri":     r.URL.RequestURI(),
@@ -203,7 +212,7 @@ func DynamicEndpoint(w http.ResponseWriter, r *http.Request) {
 	RenderJSON(w, http.StatusNotFound, NewResponse(responseText))
 }
 
-func HistoryEndpoint(w http.ResponseWriter, r *http.Request) {
+func HistoryHandler(w http.ResponseWriter, r *http.Request) {
 	result := make([]cache.Item, 0)
 	for _, item := range events.Items() {
 		result = append(result, item)
@@ -218,14 +227,14 @@ func HistoryEndpoint(w http.ResponseWriter, r *http.Request) {
 		out = append(out, result[i].Object)
 	}
 
-	RenderJSON(w, 200, out)
+	RenderJSON(w, http.StatusOK, out)
 }
 
-func ResetEndpoint(w http.ResponseWriter, r *http.Request) {
+func ResetHandler(w http.ResponseWriter, r *http.Request) {
 	events.Flush()
 	store.Flush()
 
-	RenderJSON(w, 200, nil)
+	RenderJSON(w, http.StatusOK, nil)
 }
 
 // NewResponse helper for response JSON message
@@ -242,16 +251,16 @@ func NewServer() http.Handler {
 	handler := &RegexpHandler{}
 
 	reg, _ := regexp.Compile("^/_register$")
-	handler.HandleFunc(reg, RegisterEndpoint)
+	handler.HandleFunc(reg, RegisterHandler)
 
 	reg, _ = regexp.Compile("^/_$")
-	handler.HandleFunc(reg, Home)
+	handler.HandleFunc(reg, HomeHandler)
 
 	reg, _ = regexp.Compile("^/_history$")
-	handler.HandleFunc(reg, HistoryEndpoint)
+	handler.HandleFunc(reg, HistoryHandler)
 
 	reg, _ = regexp.Compile("^/_reset$")
-	handler.HandleFunc(reg, ResetEndpoint)
+	handler.HandleFunc(reg, ResetHandler)
 
 	reg, _ = regexp.Compile("^.+")
 	handler.HandleFunc(reg, DynamicEndpoint)
@@ -285,6 +294,7 @@ func (h *RegexpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	log.Printf("route not found: %s %s", r.Method, r.URL.Path)
 	// no pattern matched; send 404 response
 	http.NotFound(w, r)
 }
