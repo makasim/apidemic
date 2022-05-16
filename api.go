@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/http/httputil"
 	"sort"
 
 	"net/http"
@@ -276,6 +277,8 @@ type route struct {
 }
 
 func (h *RegexpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	logRequest(r)
+
 	for _, route := range h.routes {
 		if route.pattern.MatchString(r.URL.Path) {
 			route.handler.ServeHTTP(w, r)
@@ -284,4 +287,9 @@ func (h *RegexpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// no pattern matched; send 404 response
 	http.NotFound(w, r)
+}
+
+func logRequest(r *http.Request) {
+	b, _ := httputil.DumpRequest(r, true)
+	log.Println(string(b))
 }
