@@ -291,5 +291,5 @@ func (h *RegexpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func logRequest(r *http.Request) {
 	b, _ := httputil.DumpRequest(r, true)
-	log.Println(string(b))
+	log.Println(string(b) + "\n\n")
 }
